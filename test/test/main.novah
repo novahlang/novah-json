@@ -1,0 +1,14 @@
+module test.main
+
+import novah.test
+
+myTest : Suite
+myTest =
+  Test "A simple test" \_ ->
+    (1 + 1) `shouldBe` 2
+
+pub
+main : Array String -> Unit
+main _ =
+  runTests [myTest]
+  ()

@@ -1,0 +1,13 @@
+{
+    "paths": ["src"],
+    "java-paths": ["src-java"],
+    "deps": {
+        "com.fasterxml.jackson.core/jackson-databind": {"mvn/version": "2.12.5"}
+    },
+    "aliases": {
+        "test": {
+            "extraPaths": ["test"],
+            "main": "test.main"
+        }
+    }
+}
