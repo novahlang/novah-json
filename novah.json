@@ -1,8 +1,9 @@
 {
     "paths": ["src"],
-    "java-paths": ["src-java"],
+    "javaPaths": ["src-java"],
+    "main": "novah.json",
     "deps": {
-        "com.fasterxml.jackson.core/jackson-databind": {"mvn/version": "2.12.5"}
+        "com.fasterxml.jackson.core/jackson-databind": {"mvn/version": "2.13.0"}
     },
     "aliases": {
         "test": {

@@ -1,0 +1,17 @@
+module novah.json
+
+foreign import com.fasterxml.jackson.databind.ObjectMapper
+
+mapper : ObjectMapper
+mapper = ObjectMapper#new()
+
+type Stuff = Stuff String Int
+
+pub
+main : Array String -> Unit
+main _ =
+  let res = mapper#writeValueAsString(Stuff "asd" 12 as Object)
+  println res
+  let obj = mapper#readValue("""{"v1":"asd","v2":12}""", Stuff#-class)
+  println (toString obj)
+  println "Hello Novah!"

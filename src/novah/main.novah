@@ -1,6 +1,0 @@
-module novah.json
-
-pub
-main : Array String -> Unit
-main _ =
-  println "Hello Novah!"
