@@ -1,7 +1,6 @@
 {
     "paths": ["src"],
     "javaPaths": ["src-java"],
-    "main": "novah.json",
     "deps": {
         "com.fasterxml.jackson.core/jackson-databind": {"mvn/version": "2.13.0"}
     },
