@@ -1,14 +1,261 @@
 module test.main
 
+foreign import com.fasterxml.jackson.core.JsonGenerator
+foreign import com.fasterxml.jackson.databind.JsonNode
+foreign import com.fasterxml.jackson.databind.ObjectMapper
+
+import novah.computation
+import novah.json as JSON
 import novah.test
 
-myTest : Suite
-myTest =
-  Test "A simple test" \_ ->
-    (1 + 1) `shouldBe` 2
+typealias Json a = Result a String
+
+primitiveReading : Unit
+primitiveReading =
+  test "Read numbers" \_ ->
+    let int1 = JSON.readInt32 "2345"
+    let int2 = JSON.readInt32 "\"abc\""
+    // null is not accepted
+    let int3 = JSON.readInt32 "null"
+    let long = JSON.readInt64 "2345"
+    let float = JSON.readFloat32 "234.56"
+    let double = JSON.readFloat64 "234.56"
+    int1 `shouldBe` Ok 2345
+    int2 `shouldBe` Err "Node is not an int32"
+    int3 `shouldBe` Err "Node is not an int32"
+    long `shouldBe` Ok 2345L
+    float `shouldBe` Ok 234.56F
+    double `shouldBe` Ok 234.56
+  
+  test "Read strings and chars" \_ ->
+    let str = JSON.readString "\"abcde\""
+    let empty = JSON.readString "\"\""
+    let cha = JSON.readChar "\"a\""
+    let cha2 = JSON.readChar "\"ab\""
+    str `shouldBe` Ok "abcde"
+    empty `shouldBe` Ok ""
+    cha `shouldBe` Ok 'a'
+    cha2 `shouldBe` Err "Node is not a char"
+  
+  test "Read booleans" \_ ->
+    let tru = JSON.readBoolean "true"
+    let fals = JSON.readBoolean "false"
+    let wrong = JSON.readBoolean "\"wrong\""
+    tru `shouldBe` Ok true
+    fals `shouldBe` Ok false
+    wrong `shouldBe` Err "Node is not a boolean"
+  
+  test "Read options" \_ ->
+    let nul = JSON.read "null" : Json (Option Int)
+    let some = JSON.read "123" : Json (Option Int)
+    nul `shouldBe` Ok None
+    some `shouldBe` Ok (Some 123)
+
+listReading : Unit
+listReading =
+  test "Read lists" \_ ->
+    let list1 = JSON.read "[1, 2, 3]" : Json (List Int32)
+    let list2 = JSON.read "[]" : Json (List Int32)
+    let list3 = JSON.read "true" : Json (List Int32)
+    let list4 = JSON.read "[true, false]" : Json (List Int32)
+    list1 `shouldBe` Ok [1, 2, 3]
+    list2 `shouldBe` Ok []
+    list3 `shouldBe` Err "Node is not an array"
+    list4 `shouldBe` Err "Error parsing list: Node is not an int32, Node is not an int32"
+
+primitiveWriting : Unit
+primitiveWriting =
+  test "Write numbers" \_ ->
+    let str = JSON.write 2345
+    let str2 = JSON.write 2345L
+    let str3 = JSON.write 234.56
+    let str4 = JSON.write 234.56F
+    str `shouldBe` "2345"
+    str2 `shouldBe` "2345"
+    str3 `shouldBe` "234.56"
+    str4 `shouldBe` "234.56"
+  
+  test "Write strings and chars" \_ ->
+    let str = JSON.write "abcd"
+    let str2 = JSON.write 'a'
+    str `shouldBe` "\"abcd\""
+    str2 `shouldBe` "\"a\""
+  
+  test "Write booleans" \_ ->
+    let tru = JSON.write true
+    let fals = JSON.write false
+    tru `shouldBe` "true"
+    fals `shouldBe` "false"
+  
+  test "Write options" \_ ->
+    let nul = JSON.write (None : Option Int32)
+    let som = JSON.write (Some 1234)
+    nul `shouldBe` "null"
+    som `shouldBe` "1234"
+
+listWriting : Unit
+listWriting =
+  test "Write lists" \_ ->
+    let list1 = JSON.write [1, 2, 3, 4]
+    let list2 = JSON.write ([] : List Int32)
+    list1 `shouldBe` "[1,2,3,4]"
+    list2 `shouldBe` "[]"
+
+prettyWriting : Unit
+prettyWriting =
+  test "Pretty Writing" \_ ->
+    let mapper = ObjectMapper#new()#writerWithDefaultPrettyPrinter()
+    let res = JSON.writeWithWriter mapper [1, 2, 3, 4]
+    res `shouldBe` "[ 1, 2, 3, 4 ]"
+
+typealias Address =
+  { street : String
+  , house : String
+  , zipCode : Option Int
+  }
+
+type Color
+  = Red
+  | Green
+  | Blue
+
+typealias Person =
+  { name : String
+  , lastName : String
+  , age : Int
+  , address : Address
+  , favoriteColor : Color
+  }
+
+readColor : JsonNode -> Result Color String
+readColor node =
+  do.result
+    let! text = JSON.stringReader node
+    let! res = case text of
+      "blue" -> Ok Blue
+      "red" -> Ok Red
+      "gree" -> Ok Green
+      _ -> Err "Invalid color"
+    return res
+
+writeColor : JsonGenerator -> Color -> Unit
+writeColor (gen : JsonGenerator) =
+  case _ of
+    Blue -> gen#writeString("blue")
+    Red -> gen#writeString("red")
+    Green -> gen#writeString("green")
+
+readAddress : JsonNode -> Result Address String
+readAddress node =
+  do.result
+    let! obj = JSON.asObject node
+    let! street = JSON.readStringFieldReq obj "street"
+    let! house = JSON.readStringFieldReq obj "house"
+    let! zipCode = JSON.readInt32Field obj "zipCode"
+    return { street
+           , house
+           , zipCode
+           }
+
+readPerson : JsonNode -> Result Person String
+readPerson node =
+  do.result
+    let! obj = JSON.asObject node
+    let! name = JSON.readStringFieldReq obj "name"
+    let! lastName = JSON.readStringFieldReq obj "lastName"
+    let! age = JSON.readInt32FieldReq obj "age"
+    let! address = JSON.readFieldWithReq readAddress obj "address"
+    let! favoriteColor = JSON.readFieldWithReq readColor obj "favoriteColor"
+    return { name
+           , lastName
+           , age
+           , address
+           , favoriteColor
+           }
+
+fullAddressJson : String
+fullAddressJson =
+  """
+  {
+    "street": "street name",
+    "house": "13A",
+    "zipCode": 12345
+  }
+  """
+
+partialAddressJson : String
+partialAddressJson =
+  """
+  {
+    "street": "street name",
+    "house": "13A"
+  }
+  """
+
+personJson : String
+personJson =
+  """
+  {
+    "name": "John",
+    "lastName": "Doe",
+    "age": 33,
+    "address": {
+      "street": "street name",
+      "house": "13A",
+      "zipCode": 12345
+    },
+    "favoriteColor": "blue"
+  }
+  """
+
+recordReading : Unit
+recordReading =
+  test "Read records" \_ ->
+    let add1 = JSON.readWith readAddress fullAddressJson
+    Result.isOk add1 `shouldBe` true
+    let add1Rec = Result.unwrap add1
+    add1Rec `recordShouldBe` { street: "street name", house: "13A", zipCode: Some 12345 }
+
+    let add2 = JSON.readWith readAddress partialAddressJson
+    Result.isOk add2 `shouldBe` true
+    let add2Rec = Result.unwrap add2
+    add2Rec `recordShouldBe` { street: "street name", house: "13A", zipCode: None }
+
+    let person = JSON.readWith readPerson personJson
+    Result.isOk person `shouldBe` true
+    let personRec = Result.unwrap person
+    personRec `recordShouldBe` personData
+
+addressData : Address
+addressData =
+  { street: "street name"
+  , house: "13A"
+  , zipCode: Some 12345
+  }
+
+personData : Person
+personData =
+  { name: "John"
+  , lastName: "Doe"
+  , age: 33
+  , address: addressData
+  , favoriteColor: Blue
+  }
+
+recordWriting : Unit
+recordWriting =
+  JSON.addSerializer Color#-class writeColor
+  test "Write records" \_ ->
+    let recJson = JSON.writeDefault personData
+    recJson `shouldBe` """{"address":{"zipCode":12345,"house":"13A","street":"street name"},"favoriteColor":"blue","lastName":"Doe","name":"John","age":33}"""
+    let rec2json = JSON.writeDefault { .zipCode = None | addressData }
+    rec2json `shouldBe` """{"zipCode":null,"house":"13A","street":"street name"}"""
+    // duplicate rows
+    let rec3json = JSON.writeDefault { street: "Street 2" | addressData }
+    rec3json `shouldBe` """{"zipCode":12345,"house":"13A","street":"Street 2","street":"street name"}"""
 
 pub
 main : Array String -> Unit
 main _ =
-  runTests [myTest]
+  runAllTests ()
   ()

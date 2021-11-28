@@ -1,17 +1,635 @@
 module novah.json
 
+foreign import com.fasterxml.jackson.core.JsonGenerator
 foreign import com.fasterxml.jackson.databind.ObjectMapper
+foreign import com.fasterxml.jackson.databind.ObjectWriter
+foreign import com.fasterxml.jackson.databind.ObjectReader
+foreign import com.fasterxml.jackson.databind.JsonNode
+foreign import com.fasterxml.jackson.databind.node.IntNode
+foreign import com.fasterxml.jackson.databind.node.LongNode
+foreign import com.fasterxml.jackson.databind.node.FloatNode
+foreign import com.fasterxml.jackson.databind.node.DoubleNode
+foreign import com.fasterxml.jackson.databind.node.TextNode
+foreign import com.fasterxml.jackson.databind.node.BooleanNode
+foreign import com.fasterxml.jackson.databind.node.NullNode
+foreign import com.fasterxml.jackson.databind.node.ArrayNode
+foreign import com.fasterxml.jackson.databind.node.ObjectNode
+foreign import com.fasterxml.jackson.databind."module".SimpleModule
+foreign import com.fasterxml.jackson.databind.Module
+foreign import io.lacuna.bifurcan.IEntry
+foreign import java.lang.Class
+foreign import novah.collections.Record
+foreign import novah.collections.ListValue
+foreign import novah.json.NovahSerializer
 
-mapper : ObjectMapper
-mapper = ObjectMapper#new()
+import novah.computation
 
-type Stuff = Stuff String Int
+/**
+ * Type class for types that can be serialized from JSON.
+ */
+pub+
+opaque type FromJson a = JsonNode -> Result a String
+
+/**
+ * Type class for types that can serialized to JSON.
+ */
+pub+
+opaque type ToJson a = a -> JsonNode
+
+listSerializer : JsonGenerator -> Object -> Unit
+listSerializer (gen : JsonGenerator) obj =
+  let listt = obj as List Object
+  gen#writeStartArray()
+  List.forEach listt \el ->
+    gen#writePOJO(el)
+  gen#writeEndArray()
+
+recordSerializer : JsonGenerator -> Object -> Unit
+recordSerializer (gen : JsonGenerator) obj =
+  let go field (lv : ListValue) =
+    gen#writePOJOField(field, lv#-value)
+    if (lv#-next as Nullable ListValue) !== null then
+      go field lv#-next
+  
+  let rec = (obj as Record)#iterator()
+  gen#writeStartObject()
+  Java.forEach rec \val ->
+    let entry = val as IEntry String ListValue
+    go entry#key() entry#value()
+  gen#writeEndObject()
+
+optionSerializer : JsonGenerator -> Object -> Unit
+optionSerializer (gen : JsonGenerator) obj =
+  let opt = obj as Option Object
+  case opt of
+    Some o -> gen#writePOJO(o)
+    None -> gen#writeNull()
+
+/**
+ * Adds a new global serializer for the specified class.
+ */
+pub
+addSerializer : Class a -> (JsonGenerator -> a -> Unit) -> Unit
+addSerializer clazz ser =
+  let mod = SimpleModule#new()
+  let nser = NovahSerializer#new()
+  nser#setSerializer(unsafeCast ser)
+  mod#addSerializer(clazz, unsafeCast nser)
+  omapper#registerModule(mod as Module)
+  ()
+
+initMapper : ObjectMapper -> ObjectMapper
+initMapper (mapper : ObjectMapper) =
+  let mod = SimpleModule#new()
+  let optSer = NovahSerializer#new()
+  optSer#setSerializer(unsafeCast optionSerializer)
+  let listSer = NovahSerializer#new()
+  listSer#setSerializer(unsafeCast listSerializer)
+  let recSer = NovahSerializer#new()
+  recSer#setSerializer(unsafeCast recordSerializer)
+  mod#addSerializer(unsafeCast Option#-class, unsafeCast optSer)
+  mod#addSerializer(unsafeCast List#-class, unsafeCast listSer)
+  mod#addSerializer(unsafeCast Record#-class, unsafeCast recSer)
+  mapper#registerModule(mod as Module)
+  mapper
+
+omapper : ObjectMapper
+omapper = initMapper ObjectMapper#new()
+
+/**
+ * Reads a JSON string into a value if possible.
+ * Takes an `ObjectReader` for configuration.
+ */
+pub
+readWithReader : {{ FromJson a }} -> ObjectReader -> String -> Result a String
+readWithReader {{FromJson fromJson}} (reader : ObjectReader) (json : String) =
+  fromJson reader#readTree(json)
+
+/**
+ * Reads a JSON string into a value if possible.
+ */
+pub
+read : {{ FromJson a }} -> String -> Result a String
+read {{FromJson fromJson}} (json : String) =
+  fromJson omapper#readTree(json)
+
+/**
+ * Reads an int32 into a value if possible.
+ */
+pub
+readInt32 : String -> Result Int32 String
+readInt32 (json : String) =
+  int32Reader omapper#readTree(json)
+
+/**
+ * Reads an int64 into a value if possible.
+ */
+pub
+readInt64 : String -> Result Int64 String
+readInt64 (json : String) =
+  int64Reader omapper#readTree(json)
+
+/**
+ * Reads a float32 into a value if possible.
+ */
+pub
+readFloat32 : String -> Result Float32 String
+readFloat32 (json : String) =
+  float32Reader omapper#readTree(json)
+
+/**
+ * Reads a float64 into a value if possible.
+ */
+pub
+readFloat64 : String -> Result Float64 String
+readFloat64 (json : String) =
+  float64Reader omapper#readTree(json)
+
+/**
+ * Reads a string into a value if possible.
+ */
+pub
+readString : String -> Result String String
+readString (json : String) =
+  stringReader omapper#readTree(json)
+
+/**
+ * Reads a char into a value if possible.
+ */
+pub
+readChar : String -> Result Char String
+readChar (json : String) =
+  charReader omapper#readTree(json)
+
+/**
+ * Reads a boolean into a value if possible.
+ */
+pub
+readBoolean : String -> Result Boolean String
+readBoolean (json : String) =
+  booleanReader omapper#readTree(json)
+
+/**
+ * Reads an option into a value if possible.
+ */
+pub
+readOption : (JsonNode -> Result a String) -> String -> Result (Option a) String
+readOption reader (json : String) =
+  optionReader reader omapper#readTree(json)
+
+/**
+ * Reads a JSON string into a value if possible.
+ * Should be used for types that have no instance of `FromJson`.
+ */
+pub
+readWith : (JsonNode -> Result a String) -> String -> Result a String
+readWith parser (json : String) =
+  parser omapper#readTree(json)
+
+/**
+ * Reads a `JsonNode` into a value if possible.
+ */
+pub
+readNode : {{ FromJson a }} -> JsonNode -> Result a String
+readNode {{FromJson fromJson}} node =
+  fromJson node
+
+/**
+ * Reads a non required field of some `ObjectNode`.
+ */
+pub
+readField : {{ FromJson a }} -> ObjectNode -> String -> Result (Option a) String
+readField {{inst}} node fieldName =
+  case get node fieldName of
+    Some anode -> readNode {{inst}} anode |> Result.map Some
+    None -> Ok None
+
+/**
+ * Reads a field of some `ObjectNode`.
+ * The field is required to be present, otherwise an error is returned.
+ */
+pub
+readFieldReq : {{ FromJson a }} -> ObjectNode -> String -> Result a String
+readFieldReq {{inst}} node fieldName =
+  do.result
+    let! fieldNode = getReq node fieldName
+    let! field = readNode {{inst}} fieldNode : Result a String
+    return field
+
+/**
+ * Reads a field of some `ObjectNode`.
+ * Should be used for types that have no instance of `FromJson`.
+ */
+pub
+readFieldWith : (JsonNode -> Result a String) -> ObjectNode -> String -> Result (Option a) String
+readFieldWith reader node fieldName =
+  case get node fieldName of
+    Some anode -> reader anode |> Result.map Some
+    None -> Ok None
+
+/**
+ * Reads a field of some `ObjectNode`.
+ * The field is required to be present, otherwise an error is returned.
+ * Should be used for types that have no instance of `FromJson`.
+ */
+pub
+readFieldWithReq : (JsonNode -> Result a String) -> ObjectNode -> String -> Result a String
+readFieldWithReq reader node fieldName =
+  do.result
+    let! fieldNode = getReq node fieldName
+    let! field = reader fieldNode : Result a String
+    return field
+
+/**
+ * Reads a non required int32 field of some `ObjectNode`.
+ */
+pub
+readInt32Field : ObjectNode -> String -> Result (Option Int32) String
+readInt32Field node fieldName =
+  readField {{intFromJson}} node fieldName
+
+/**
+ * Reads a non required int64 field of some `ObjectNode`.
+ */
+pub
+readInt64Field : ObjectNode -> String -> Result (Option Int64) String
+readInt64Field node fieldName =
+  readField {{int64FromJson}} node fieldName
+
+
+/**
+ * Reads a non required float32 field of some `ObjectNode`.
+ */
+pub
+readFloat32Field : ObjectNode -> String -> Result (Option Float32) String
+readFloat32Field node fieldName =
+  readField {{float32FromJson}} node fieldName
+
+/**
+ * Reads a non required float64 field of some `ObjectNode`.
+ */
+pub
+readFloat64Field : ObjectNode -> String -> Result (Option Float64) String
+readFloat64Field node fieldName =
+  readField {{float64FromJson}} node fieldName
+
+/**
+ * Reads a non required string field of some `ObjectNode`.
+ */
+pub
+readStringField : ObjectNode -> String -> Result (Option String) String
+readStringField node fieldName =
+  readField {{stringFromJson}} node fieldName
+
+/**
+ * Reads a non required char field of some `ObjectNode`.
+ */
+pub
+readCharField : ObjectNode -> String -> Result (Option Char) String
+readCharField node fieldName =
+  readField {{charFromJson}} node fieldName
+
+/**
+ * Reads a non required boolean field of some `ObjectNode`.
+ */
+pub
+readBooleanField : ObjectNode -> String -> Result (Option Boolean) String
+readBooleanField node fieldName =
+  readField {{booleanFromJson}} node fieldName
+
+/**
+ * Reads an int32 field of some `ObjectNode`.
+ */
+pub
+readInt32FieldReq : ObjectNode -> String -> Result Int32 String
+readInt32FieldReq node fieldName =
+  readFieldReq {{intFromJson}} node fieldName
+
+/**
+ * Reads an int64 field of some `ObjectNode`.
+ */
+pub
+readInt64FieldReq : ObjectNode -> String -> Result Int64 String
+readInt64FieldReq node fieldName =
+  readFieldReq {{int64FromJson}} node fieldName
+
+
+/**
+ * Reads a float32 field of some `ObjectNode`.
+ */
+pub
+readFloat32FieldReq : ObjectNode -> String -> Result Float32 String
+readFloat32FieldReq node fieldName =
+  readFieldReq {{float32FromJson}} node fieldName
+
+/**
+ * Reads a float64 field of some `ObjectNode`.
+ */
+pub
+readFloat64FieldReq : ObjectNode -> String -> Result Float64 String
+readFloat64FieldReq node fieldName =
+  readFieldReq {{float64FromJson}} node fieldName
+
+/**
+ * Reads a string field of some `ObjectNode`.
+ */
+pub
+readStringFieldReq : ObjectNode -> String -> Result String String
+readStringFieldReq node fieldName =
+  readFieldReq {{stringFromJson}} node fieldName
+
+/**
+ * Reads a char field of some `ObjectNode`.
+ */
+pub
+readCharFieldReq : ObjectNode -> String -> Result Char String
+readCharFieldReq node fieldName =
+  readFieldReq {{charFromJson}} node fieldName
+
+/**
+ * Reads a boolean field of some `ObjectNode`.
+ */
+pub
+readBooleanFieldReq : ObjectNode -> String -> Result Boolean String
+readBooleanFieldReq node fieldName =
+  readFieldReq {{booleanFromJson}} node fieldName
+
+/**
+ * Writes a value to JSON.
+ * Takes an `ObjectWriter` for configuration.
+ */
+pub
+writeWithWriter : {{ ToJson a }} -> ObjectWriter -> a -> String
+writeWithWriter {{ToJson toJson}} (writer : ObjectWriter) val =
+  let res = toJson val
+  writer#writeValueAsString(res as Object)
+
+/**
+ * Writes a value to JSON.
+ */
+pub
+write : {{ ToJson a }} -> a -> String
+write {{ToJson toJson}} val =
+  let res = toJson val
+  omapper#writeValueAsString(res as Object)
+
+/**
+ * Writes a value to JSON.
+ * Will throw an exception if it's not possible.
+ */
+pub
+writeDefault : a -> String
+writeDefault val =
+  omapper#writeValueAsString(val as Object)
+
+/**
+ * Writes a value to JSON.
+ * Will throw an exception if it's not possible.
+ * Takes an `ObjectWriter` for configuration.
+ */
+pub
+writeDefaultWithWriter : ObjectWriter -> a -> String
+writeDefaultWithWriter (writer : ObjectWriter) val =
+  writer#writeValueAsString(val as Object)
+
+// primitive instances
+
+/**
+ * Reads a `JsonNode` into an int32.
+ */
+pub
+int32Reader : JsonNode -> Result Int32 String
+int32Reader (node : JsonNode) =
+  if not node#isNull() && node#canConvertToInt() then
+    Ok node#asInt()
+  else
+    Err "Node is not an int32"
+
+pub instance
+intFromJson : FromJson Int32
+intFromJson =
+  FromJson int32Reader
+
+/**
+ * Reads a `JsonNode` into an int64.
+ */
+pub
+int64Reader : JsonNode -> Result Int64 String
+int64Reader (node : JsonNode) =
+  if not node#isNull() && node#canConvertToLong() then
+    Ok node#asLong()
+  else
+    Err "Node is not an int64"
+
+pub instance
+int64FromJson : FromJson Int64
+int64FromJson =
+  FromJson int64Reader
+
+/**
+ * Reads a `JsonNode` into an float32.
+ */
+pub
+float32Reader : JsonNode -> Result Float32 String
+float32Reader (node : JsonNode) =
+  if not node#isNull() && node#isFloatingPointNumber() then
+    Ok node#asDouble()#floatValue()
+  else
+    Err "Node is not a float32"
+
+pub instance
+float32FromJson : FromJson Float32
+float32FromJson =
+  FromJson float32Reader
+
+/**
+ * Reads a `JsonNode` into an float64.
+ */
+pub
+float64Reader : JsonNode -> Result Float64 String
+float64Reader (node : JsonNode) =
+  if not node#isNull() && node#isFloatingPointNumber() then
+    Ok node#asDouble()
+  else
+    Err "Node is not a float64"
+
+pub instance
+float64FromJson : FromJson Float64
+float64FromJson =
+  FromJson float64Reader
+
+/**
+ * Reads a `JsonNode` into an string.
+ */
+pub
+stringReader : JsonNode -> Result String String
+stringReader (node : JsonNode) =
+  if not node#isNull() && node#isTextual() then
+    Ok node#asText()
+  else
+    Err "Node is not a string"
+
+pub instance
+stringFromJson : FromJson String
+stringFromJson =
+  FromJson stringReader
+
+/**
+ * Reads a `JsonNode` into an char.
+ */
+pub
+charReader : JsonNode -> Result Char String
+charReader (node : JsonNode) =
+  if not node#isNull() && node#isTextual() then
+    let str = node#asText()
+    if String.size str == 1 then
+      String.nth 0 str |> Option.unwrap |> Ok
+    else
+      Err "Node is not a char"
+  else
+    Err "Node is not a char"
+
+pub instance
+charFromJson : FromJson Char
+charFromJson =
+  FromJson charReader
+
+/**
+ * Reads a `JsonNode` into an boolean.
+ */
+pub
+booleanReader : JsonNode -> Result Boolean String
+booleanReader (node : JsonNode) =
+  if not node#isNull() && node#isBoolean() then
+    Ok node#asBoolean()
+  else
+    Err "Node is not a boolean"
+
+pub instance
+booleanFromJson : FromJson Boolean
+booleanFromJson =
+  FromJson booleanReader
+
+pub instance
+intToJson : ToJson Int32
+intToJson =
+  ToJson (\i -> IntNode#new(i) as JsonNode)
+
+pub instance
+int64ToJson : ToJson Int64
+int64ToJson =
+  ToJson (\i -> LongNode#new(i) as JsonNode)
+
+pub instance
+float32ToJson : ToJson Float32
+float32ToJson =
+  ToJson (\i -> FloatNode#new(i) as JsonNode)
+
+pub instance
+float64ToJson : ToJson Float64
+float64ToJson =
+  ToJson (\i -> DoubleNode#new(i) as JsonNode)
+
+pub instance
+stringToJson : ToJson String
+stringToJson =
+  ToJson (\s -> TextNode#new(s) as JsonNode)
+
+pub instance
+charToJson : ToJson Char
+charToJson =
+  ToJson (\c -> TextNode#new(toString c) as JsonNode)
+
+pub instance
+booleanToJson : ToJson Boolean
+booleanToJson =
+  ToJson (\b -> (if b then BooleanNode#-"TRUE" else BooleanNode#-"FALSE") as JsonNode)
 
 pub
-main : Array String -> Unit
-main _ =
-  let res = mapper#writeValueAsString(Stuff "asd" 12 as Object)
-  println res
-  let obj = mapper#readValue("""{"v1":"asd","v2":12}""", Stuff#-class)
-  println (toString obj)
-  println "Hello Novah!"
+optionReader : (JsonNode -> Result a String) -> JsonNode -> Result (Option a) String
+optionReader reader (node : JsonNode) =
+  if node#isNull() then
+    Ok None
+  else
+    case reader node of
+      Ok val -> Ok (Some val)
+      Err err -> Err err
+
+pub instance
+optionFromJsonInstance : {{ FromJson a }} -> FromJson (Option a)
+optionFromJsonInstance {{FromJson parser}} =
+  FromJson (optionReader parser)
+
+pub instance
+optionToJsonInstance : {{ ToJson a }} -> ToJson (Option a)
+optionToJsonInstance {{ToJson parser}} =
+  ToJson
+    case _ of
+      Some val -> parser val
+      None -> NullNode#-"instance" as JsonNode
+
+pub
+optionToJson : (a -> JsonNode) -> ToJson (Option a)
+optionToJson fun =
+  ToJson
+    case _ of
+      Some val -> fun val
+      None -> NullNode#-"instance" as JsonNode
+
+pub
+listReader : (JsonNode -> Result a String) -> JsonNode -> Result (List a) String
+listReader reader (node : JsonNode) =
+  if node#isArray() then
+    let elements = (node as ArrayNode)#elements()
+    let lis = []#linear()
+    let errs = []#linear()
+    Java.forEach elements \el ->
+      case reader el of
+        Ok res ->
+          addLast res lis
+          ()
+        Err err ->
+          addLast err errs
+          ()
+    
+    if List.isEmpty errs then
+      Ok lis#forked()
+    else
+      format "Error parsing list: %s" [String.join ", " errs] |> Err
+  else
+    Err "Node is not an array"
+
+pub instance
+listFromJsonInstance : {{ FromJson a }} -> FromJson (List a)
+listFromJsonInstance {{FromJson parser}} =
+  FromJson (listReader parser)
+
+pub instance
+listToJsonInstance : {{ ToJson a }} -> ToJson (List a)
+listToJsonInstance {{ToJson parser}} =
+  ToJson
+    \lis ->
+      let node = omapper#createArrayNode()
+      List.forEach lis \element ->
+        node#add(parser element)
+      node as JsonNode
+
+/**
+ * Returns an object node (if the node is an `ObjectNode`) or an error.
+ */
+pub
+asObject : JsonNode -> Result ObjectNode String
+asObject (node : JsonNode) =
+  if node#isObject() then
+    Ok (node as ObjectNode)
+  else
+    Err "Node is not an object"
+
+get : ObjectNode -> String -> Option JsonNode
+get (node : ObjectNode) (fieldName : String) =
+  (node#get(fieldName) as Nullable JsonNode) |> Option.toOption
+
+getReq : ObjectNode -> String -> Result JsonNode String
+getReq (node : ObjectNode) (fieldName : String) =
+  let field = (node#get(fieldName) as Nullable JsonNode)
+  Option.caseNull (format "Node %s is not present" [fieldName] |> Err) Ok field
