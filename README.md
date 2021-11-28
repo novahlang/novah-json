@@ -100,3 +100,7 @@ addressJson =
 parsedAddress : Result Address String
 parsedAddress = JSON.readWith readAddress addressJson
 ```
+
+## License
+
+Release under the Apache 2.0 license. See LICENSE for the full license.
