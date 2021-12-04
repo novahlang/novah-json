@@ -6,7 +6,13 @@ A library for writing and reading Novah types to/from JSON.
 
 Add `novah-json` to your dependencies.
 
-TODO
+```json
+{
+    "deps": {
+        "github.com/novahlang/novah-json": {"git/version": "main"}
+    }
+}
+```
 
 ## Writing JSON
 
